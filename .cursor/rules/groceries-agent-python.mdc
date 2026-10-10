@@ -1,0 +1,38 @@
+---
+description: Python/Flask backend conventions for Groceries-Agent (Flask, Playwright, parsers)
+alwaysApply: true
+---
+
+# Groceries-Agent — Python / Flask
+
+Treat [`AGENTS.md`](AGENTS.md) as the full source of truth. This rule is a short checklist for changes in this repo.
+
+## Architecture
+
+- **Single Flask entry**: new HTTP routes and webhooks live in `app.py` only.
+- **`playwright_agent.py`**: stateless automation; persistent Chromium session under `.browser-profile/`.
+- **`parser.py`**: pure validation — no I/O, Flask, or Playwright imports.
+- **`store_config.py`**: adding a store means adding one `STORE_LISTS` entry; avoid scattering URLs elsewhere.
+- **No database or ORM** — keep the server stateless between requests.
+
+## Errors and HTTP
+
+- **`ValueError`**: invalid user input (bad JSON, bad quantities, unknown keys in parsers).
+- **`RuntimeError`**: infrastructure (missing profile, expired OurGroceries session, Playwright failures).
+- **Flask**: `jsonify({"error": "message"})` — **400** for client mistakes, **500** for server/infrastructure. Never return tracebacks to callers.
+
+## Style (match existing modules)
+
+- Type-hint every public function; use `dict[str, …]`, `list[str]`, not `Dict`/`List`.
+- Imports: stdlib → third-party → local; one blank line between groups; sorted within group.
+- **4 spaces**, ~**88** char lines, no trailing whitespace, newline at EOF.
+
+## Testing and quality
+
+- **`pytest`** for tests (`tests/test_*.py`). Mock Playwright in agent tests — do not launch a real browser in CI/tests unless explicitly requested.
+- After substantive edits: **`ruff check .`** and **`mypy .`** when practical.
+
+## Do not
+
+- Add logging frameworks beyond stdlib `logging` / `print()` per project norms.
+- Introduce class hierarchies for plumbing — prefer functions and modules.

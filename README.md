@@ -43,6 +43,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+
+
 ### 4. Install Playwright browsers
 
 This downloads a headless Chromium binary that Playwright uses:
@@ -50,6 +52,8 @@ This downloads a headless Chromium binary that Playwright uses:
 ```bash
 playwright install chromium
 ```
+
+
 
 ### 5. Create your .env file
 
@@ -71,6 +75,8 @@ Edit `.env` if you want to change the port or enable debug mode. The defaults wo
 PORT=5000
 FLASK_ENV=development
 ```
+
+
 
 ### 6. Update store URLs (optional)
 
@@ -109,6 +115,8 @@ You should see:
 ```
  * Running on http://0.0.0.0:5000
 ```
+
+
 
 ## Testing the endpoint
 
@@ -178,12 +186,18 @@ Expected:
 {"error": "quantity for 'eggs' must be a positive integer, got 0"}
 ```
 
+
+
 ## WhatsApp Integration Setup
+
+
 
 ### Prerequisites
 
 - A Meta Developer account (free)
 - ngrok installed with a free static domain
+
+
 
 ### Setting up ngrok
 
@@ -199,10 +213,12 @@ ngrok config add-authtoken <your-token>
 2. Start the tunnel pointing at your Flask server:
 
 ```bash
-ngrok http --domain=https://pinchable-waspiest-alma.ngrok-free.dev 5000
+ngrok http --domain=pinchable-waspiest-alma.ngrok-free.dev 5000
 ```
 
 1. Your server is now publicly reachable at `https://yourname.ngrok-free.app`
+
+
 
 ### Setting up Meta Developer account and WhatsApp Cloud API
 
@@ -216,6 +232,8 @@ ngrok http --domain=https://pinchable-waspiest-alma.ngrok-free.dev 5000
 5. Copy the **Phone Number ID** and **access token** into your `.env` file
 6. Make up any string for `WA_VERIFY_TOKEN` (e.g. `my-secret-token-123`) and add it to `.env`
 
+
+
 ### Registering your webhook
 
 1. In the Meta dashboard, go to WhatsApp → Configuration → Webhook
@@ -224,6 +242,8 @@ ngrok http --domain=https://pinchable-waspiest-alma.ngrok-free.dev 5000
   - **Verify token:** the value you set for `WA_VERIFY_TOKEN` in `.env`
 3. Click "Verify and Save" — Meta will call your `GET /whatsapp` endpoint to confirm it's reachable
 4. After verification, click "Manage" next to Webhook Fields and subscribe to the `**messages`** field
+
+
 
 ### Testing the WhatsApp flow
 
@@ -238,6 +258,8 @@ Expected reply:
 ```
 Added: eggs x3, milk x2 to Aldi ✓
 ```
+
+
 
 ### Message format
 
@@ -274,6 +296,3 @@ Valid store names match the keys in `store_config.py`.
 | `curl -X` fails with "parameter cannot be found"              | PowerShell aliases `curl` to `Invoke-WebRequest`. Use `Invoke-RestMethod` (shown above) or `curl.exe` instead   |
 
 
-#   A u t o m a t i c - g r o c e r y - c a r t - u p d a t e r  
- #   A u t o m a t i c - g r o c e r y - c a r t - u p d a t e r  
- 

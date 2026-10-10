@@ -1,0 +1,70 @@
+# Secrets and local config (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Persistent Chromium login session (see login.py / AGENTS.md)
+.browser-profile/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# pytest, coverage, type-check, lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Playwright (reports / traces from local runs)
+playwright-report/
+test-results/
+blob-report/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Vercel CLI link data (legal-pages deploys)
+.vercel/
+
+# Local logs
+*.log
+
+# Windows reserved-name accident files
+nul
