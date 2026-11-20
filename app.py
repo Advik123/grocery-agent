@@ -5,7 +5,9 @@
 # parallel requests and Siri App Intents will reuse the same endpoint.
 
 import asyncio
+import hmac
 import os
+from contextvars import ContextVar
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -36,7 +38,17 @@ WHATSAPP_FORMAT_HINT = (
 _AFFIRMATIVES = {"yes", "yeah", "yep", "y", "ok", "okay", "sure", "yup"}
 
 
+# When set, replies are collected here instead of sent (used by /shortcut).
+_REPLY_COLLECTOR: ContextVar[list[str] | None] = ContextVar(
+    "reply_collector", default=None
+)
+
+
 def _reply_or_log(to: str, message: str) -> None:
+    collector = _REPLY_COLLECTOR.get()
+    if collector is not None:
+        collector.append(message)
+        return
     try:
         send_whatsapp_reply(to, message)
     except RuntimeError as exc:
@@ -190,6 +202,47 @@ def _resolve_pending_confirmation(phone: str, text: str) -> None:
         _reply_or_log(phone, f"Couldn't understand that. {WHATSAPP_FORMAT_HINT}")
 
 
+def _handle_message(phone: str, text: str) -> None:
+    """Run *text* from sender *phone* through the shared grocery flow."""
+    # --- pending confirmation: the user is answering "which store?" ---
+    if has_pending_items(phone):
+        _resolve_pending_confirmation(phone, text)
+        return
+
+    # --- parse the message ---
+    try:
+        store, raw_items = parse_whatsapp_text(text)
+    except ValueError as exc:
+        _reply_or_log(phone, f"Sorry, {exc}. {WHATSAPP_FORMAT_HINT}")
+        return
+
+    if store:
+        # Explicit store included — add directly
+        _execute_add(phone, store, raw_items)
+        return
+
+    # Items only — consult session memory
+    fresh_store = get_last_store(phone)
+    if fresh_store:
+        _reply_or_log(phone, f"Using {fresh_store.title()} (last used store)…")
+        _execute_add(phone, fresh_store, raw_items)
+        return
+
+    expired_store = get_expired_store(phone)
+    if expired_store:
+        set_pending_items(phone, raw_items)
+        _reply_or_log(
+            phone,
+            f"Your {expired_store.title()} session expired. "
+            f'Reply "yes" or "{expired_store.title()}" to add there, '
+            "or say a different store name.",
+        )
+        return
+
+    # No store context at all
+    _reply_or_log(phone, f"I need a store name. {WHATSAPP_FORMAT_HINT}")
+
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_webhook():
     """Handle inbound WhatsApp messages and add parsed items to a store list."""
@@ -202,45 +255,47 @@ def whatsapp_webhook():
         return "", 200
 
     phone, text = parsed_message
-
-    # --- pending confirmation: the user is answering "which store?" ---
-    if has_pending_items(phone):
-        _resolve_pending_confirmation(phone, text)
-        return "", 200
-
-    # --- parse the message ---
-    try:
-        store, raw_items = parse_whatsapp_text(text)
-    except ValueError as exc:
-        _reply_or_log(phone, f"Sorry, {exc}. {WHATSAPP_FORMAT_HINT}")
-        return "", 200
-
-    if store:
-        # Explicit store included — add directly
-        _execute_add(phone, store, raw_items)
-        return "", 200
-
-    # Items only — consult session memory
-    fresh_store = get_last_store(phone)
-    if fresh_store:
-        _reply_or_log(phone, f"Using {fresh_store.title()} (last used store)…")
-        _execute_add(phone, fresh_store, raw_items)
-        return "", 200
-
-    expired_store = get_expired_store(phone)
-    if expired_store:
-        set_pending_items(phone, raw_items)
-        _reply_or_log(
-            phone,
-            f"Your {expired_store.title()} session expired. "
-            f'Reply "yes" or "{expired_store.title()}" to add there, '
-            "or say a different store name.",
-        )
-        return "", 200
-
-    # No store context at all
-    _reply_or_log(phone, f"I need a store name. {WHATSAPP_FORMAT_HINT}")
+    _handle_message(phone, text)
     return "", 200
+
+
+def _shortcut_text() -> str:
+    """Extract message text from a JSON, form, or plain-text request body."""
+    body = request.get_json(silent=True)
+    if isinstance(body, dict):
+        value = body.get("text")
+        return value.strip() if isinstance(value, str) else ""
+    if "text" in request.form:
+        return request.form["text"].strip()
+    return request.get_data(as_text=True).strip()
+
+
+@app.route("/shortcut", methods=["POST"])
+def shortcut():
+    """Handle Apple Shortcuts / Siri text and return the agent reply as JSON."""
+    expected = os.getenv("SHORTCUT_TOKEN")
+    if not expected:
+        return jsonify({"error": "shortcut endpoint is not configured"}), 503
+
+    token = request.headers.get("X-Token", "")
+    if not hmac.compare_digest(token.encode(), expected.encode()):
+        return jsonify({"error": "unauthorized"}), 401
+
+    text = _shortcut_text()
+    if not text:
+        return jsonify({"error": "'text' is required"}), 400
+
+    sender = os.getenv("SHORTCUT_SENDER_ID") or "shortcut"
+    replies: list[str] = []
+    reset = _REPLY_COLLECTOR.set(replies)
+    try:
+        _handle_message(sender, text)
+    except RuntimeError as exc:
+        return jsonify({"error": f"could not process message: {exc}"}), 500
+    finally:
+        _REPLY_COLLECTOR.reset(reset)
+
+    return jsonify({"reply": " ".join(replies)}), 200
 
 
 if __name__ == "__main__":

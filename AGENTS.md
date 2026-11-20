@@ -46,7 +46,7 @@ python -m py_compile app.py
 ## File layout
 
 ```
-app.py              - Flask server, /add endpoint and /whatsapp webhook routes
+app.py               - Flask server, /add, /whatsapp webhook and /shortcut (Siri) routes
 login.py            - one-time login helper (sync Playwright, headed browser)
 playwright_agent.py - async Playwright automation (add_to_list)
 store_config.py     - store name -> OurGroceries URL map (STORE_LISTS)
@@ -170,6 +170,9 @@ POST /add  →  parse_items()  →  get_list_url()  →  add_to_list()  →  200
            ↓ bad input        ↓ unknown store    ↓ session error
              400               400                 500
 
+POST /shortcut  →  check X-Token  →  _handle_message()  →  reply collected and
+                    returned as JSON {"reply": ...} (no WhatsApp send)
+
 GET /whatsapp  →  verify WA_VERIFY_TOKEN  →  return hub.challenge or 403
 
 POST /whatsapp → parse_whatsapp_message() → parse_whatsapp_text()
@@ -185,6 +188,8 @@ POST /whatsapp → parse_whatsapp_message() → parse_whatsapp_text()
 - Env vars: `PORT` (default 5000), `FLASK_ENV` (default production).
 - WhatsApp env vars: `WA_PHONE_NUMBER_ID`, `WA_ACCESS_TOKEN`,
   `WA_VERIFY_TOKEN`.
+- Siri/Shortcuts: `SHORTCUT_TOKEN` (required; endpoint returns 503 if unset),
+  optional `SHORTCUT_SENDER_ID` (session id, default `shortcut`).
 - `GEMINI_API_KEY` — Gemini API key for natural language message parsing (get free at aistudio.google.com)
 
 ## Phase roadmap

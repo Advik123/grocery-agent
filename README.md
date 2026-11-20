@@ -188,6 +188,33 @@ Expected:
 
 
 
+## Siri via Apple Shortcuts
+
+`POST /shortcut` lets you talk to the agent from Siri and get the reply back in
+the HTTP response (no WhatsApp involved). It uses the same parser and session
+memory as the WhatsApp flow.
+
+1. Generate a long random token and put it in `.env` as `SHORTCUT_TOKEN`:
+
+```bash
+python -c "import secrets;print(secrets.token_urlsafe(32))"
+```
+
+   Optionally set `SHORTCUT_SENDER_ID` (default `shortcut`) to your WhatsApp
+   number to share conversation memory with that session. If `SHORTCUT_TOKEN`
+   is unset the endpoint returns 503.
+
+2. Start the server and ngrok (see below), then create a Shortcut with these
+   actions:
+   1. **Dictate Text**
+   2. **Get Contents of URL** — URL `https://<ngrok-domain>/shortcut`, Method
+      `POST`, Headers: `X-Token` = your token, Request Body `JSON` with field
+      `text` (Text) = *Dictated Text*
+   3. **Get Dictionary Value** — Get `Value` for `reply` in *Contents of URL*
+   4. **Speak Text** — *Dictionary Value*
+
+3. Name the shortcut (e.g. "Groceries") and say "Hey Siri, Groceries".
+
 ## WhatsApp Integration Setup
 
 
