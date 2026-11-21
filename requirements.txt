@@ -1,6 +1,6 @@
 # Runtime: Flask server, Playwright, WhatsApp replies, Gemini parsing
 flask>=3.0,<4.0
-google-generativeai>=0.8,<1.0
+google-genai>=3.0,<4.0
 playwright>=1.40,<2.0
 python-dotenv>=1.0,<2.0
 requests>=2.31,<3.0

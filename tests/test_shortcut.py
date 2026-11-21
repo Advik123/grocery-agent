@@ -41,11 +41,7 @@ def test_empty_text_returns_400(client):
 @patch("app.parse_whatsapp_text")
 def test_happy_path_returns_reply(mock_parse, mock_add, mock_send, client):
     mock_parse.return_value = ("aldi", {"eggs": 3})
-
-    async def fake_add(url, items):
-        return ["eggs x3"]
-
-    mock_add.side_effect = fake_add
+    mock_add.return_value = ["eggs x3"]
     resp = _post(client, json={"text": "3 eggs to aldi"})
     assert resp.status_code == 200
     assert resp.get_json() == {"reply": "Added: eggs x3 to Aldi ✓"}

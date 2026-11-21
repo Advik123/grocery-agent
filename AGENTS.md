@@ -6,7 +6,8 @@ Instructions for coding agents working in this repository.
 
 A Python/Flask backend that accepts POST requests and automates adding grocery
 items to OurGroceries lists via Playwright.  Includes WhatsApp Cloud API webhook
-integration with natural language parsing via Gemini 2.5 Flash.  WhatsApp is
+integration with natural language parsing via Gemini 2.5 Flash (simple lists
+such as "milk, eggs at aldi" are parsed locally without an LLM call).  WhatsApp is
 the only planned client; the Swift iOS frontend and Siri App Intents phases are
 unlikely to be built.
 
@@ -48,16 +49,19 @@ python -m py_compile app.py
 ```
 app.py               - Flask server, /add, /whatsapp webhook, /status and /shortcut (Siri) routes
 login.py            - one-time login helper (sync Playwright, headed browser)
-playwright_agent.py - async Playwright automation (add_to_list)
+playwright_agent.py - long-lived headless Chromium on a background thread
+                      (add_to_list, warm_up, shutdown)
 store_config.py     - store name -> OurGroceries URL map (STORE_LISTS)
 parser.py           - input validation & cleaning (parse_items)
-message_parser.py   - WhatsApp text command parsing (parse_whatsapp_text)
+message_parser.py   - WhatsApp text command parsing (parse_whatsapp_text):
+                      regex fast path, then Gemini via google-genai
+conversation_memory.py - in-memory per-sender session state (last store, pending)
 whatsapp.py         - WhatsApp Cloud API payload parsing and replies
 debug.py            - selector debugging utility
 requirements.txt    - pinned dependency ranges
 .env.example        - config template
 .browser-profile/   - persistent Chromium profile (login session)
-tests/              - pytest tests (create when adding tests)
+tests/              - pytest tests; conftest.py forces BROWSER_WARMUP=0
 legal-pages/        - static privacy/deletion pages for Meta app publishing
 ```
 
@@ -88,7 +92,7 @@ Sort alphabetically within each group.  Use `import X` for stdlib and
 `from X import Y` for third-party/local.  Example from `app.py`:
 
 ```python
-import asyncio
+import hashlib
 import os
 
 from dotenv import load_dotenv
@@ -121,8 +125,20 @@ from store_config import get_list_url
 ## Architecture
 
 - `app.py` is the single entry point.  No additional Flask apps.
-- `playwright_agent.py` is stateless — no module-level mutable state.
-  Uses a persistent Chromium context at `.browser-profile/`.
+- `playwright_agent.py` is the one deliberate exception to "no module-level
+  state": it keeps a single headless Chromium (persistent context at
+  `.browser-profile/`) alive across requests, because launching it per request
+  cost several seconds.  The state lives in one `_Runner` dataclass and is only
+  touched by a dedicated background thread running its own asyncio loop
+  (Playwright objects are bound to the loop that created them).
+  `add_to_list()` is synchronous: it takes a lock, submits a coroutine with
+  `asyncio.run_coroutine_threadsafe` and waits.  It reuses one page, skips
+  navigation when the list is already open, relaunches a crashed/closed
+  browser once, raises `RuntimeError` for every browser failure, and an
+  `atexit` hook closes the browser.  The state is per process, so every
+  gunicorn worker gets its own browser — run one worker.
+- While the server runs, Chromium holds the profile lock on
+  `.browser-profile/`, so stop the server before running `login.py`.
 - `store_config.py` is pure data + lookup.  To add a store, add one entry
   to `STORE_LISTS`.  No other files change.
 - `parser.py` is pure — no I/O, no Flask/Playwright imports.
@@ -139,12 +155,18 @@ OurGroceries uses a JS-rendered UI.  Key selectors (verified via debug.py):
 | Add item button | `button.addItemButton` |
 | Item name input | `#addItemName` (type="search", placeholder="Find or add item") |
 
-The flow: click `.addItemButton` → wait for `#addItemName` visible → fill → Enter.
+The flow: open the list (skipped if already open) → wait for `.addItemButton`
+visible (or a `/sign-in` redirect) → click it unless `#addItemName` is already
+visible → fill → Enter → wait until the input clears and the item name is on
+the page (3 s bounded fallback, no fixed sleep).
 
 ## Testing conventions
 
 - Use `pytest`.  Files: `tests/test_*.py`.  Functions: `test_<what_it_tests>`.
-- `tests/test_message_parser.py` covers WhatsApp command parsing.
+- `tests/test_message_parser.py` covers WhatsApp command parsing (fast path and
+  mocked Gemini; patch `message_parser._gemini`).
+- `tests/test_playwright_agent.py` covers browser reuse/relaunch with a mocked
+  `async_playwright`; call `playwright_agent.shutdown()` after each test.
 - `pytest.raises(ValueError)` for expected-error cases.
 - Mock Playwright in `test_playwright_agent.py` — don't launch a real browser.
 - Fixtures in `tests/conftest.py` or at the top of each test file.
@@ -196,6 +218,20 @@ POST /whatsapp → verify X-Hub-Signature-256 (WA_APP_SECRET; 503 unset, 403 bad
 - Siri/Shortcuts: `SHORTCUT_TOKEN` (required; endpoint returns 503 if unset),
   optional `SHORTCUT_SENDER_ID` (session id, default `shortcut`).
 - `GEMINI_API_KEY` — Gemini API key for natural language message parsing (get free at aistudio.google.com)
+- `GEMINI_MODEL` — optional, default `gemini-2.5-flash` (thinking disabled with
+  `thinking_budget=0`; Gemini 3+ models get `thinking_level=LOW` instead).
+- `BROWSER_WARMUP` — optional; `1` starts Chromium and opens the first store's
+  list when `app.py` is imported so the first request is not a cold start.
+
+## Deployment
+
+Production is a Raspberry Pi 4 (4 GB, ARM64) running gunicorn under systemd
+behind ngrok, next to OctoPrint and a webcam streamer.  Run **one** gunicorn
+worker (`--workers 1 --threads 4`): each worker would hold its own Chromium
+plus Playwright Node driver (roughly 300-400 MB PSS together) and its own
+`conversation_memory` sessions.  Do not use
+`--preload`.  Timing lines (`[timing] gemini_parse …`, `[timing] playwright_add
+…`) go to stdout / the journal.
 
 ## Phase roadmap
 

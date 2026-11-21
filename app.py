@@ -4,11 +4,11 @@
 # Phase 3: ngrok tunneling will expose this server publicly; multi-store
 # parallel requests and Siri App Intents will reuse the same endpoint.
 
-import asyncio
 import hashlib
 import hmac
 import os
 import subprocess
+import threading
 import time
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -27,8 +27,8 @@ from conversation_memory import (
 )
 from message_parser import parse_whatsapp_text
 from parser import parse_items
-from playwright_agent import add_to_list
-from store_config import get_list_url
+from playwright_agent import add_to_list, warm_up
+from store_config import STORE_LISTS, get_list_url
 from whatsapp import parse_whatsapp_message, send_whatsapp_reply
 
 load_dotenv()
@@ -170,8 +170,8 @@ def add():
 
     # --- add items via Playwright ---
     try:
-        added = asyncio.run(add_to_list(url, items))
-    except Exception as exc:
+        added = add_to_list(url, items)
+    except RuntimeError as exc:
         return jsonify({"error": f"playwright failed: {exc}"}), 500
 
     _record_add()
@@ -209,7 +209,7 @@ def _execute_add(phone: str, store: str, raw_items: dict[str, int]) -> None:
         return
 
     try:
-        added = asyncio.run(add_to_list(url, items))
+        added = add_to_list(url, items)
         _record_add()
         remember_store(phone, store)
         _reply_or_log(phone, f"Added: {', '.join(added)} to {store.title()} ✓")
@@ -401,6 +401,33 @@ def status():
             "last_add_at": _LAST_ADD_AT[0],
         }
     ), 200
+
+
+def _warm_browser() -> None:
+    """Start Chromium and open the first store's list so the first add is fast."""
+    try:
+        warm_up(next(iter(STORE_LISTS.values())))
+    except RuntimeError as exc:
+        print(f"WARNING: {exc}")
+
+
+def _start_browser_warmup() -> None:
+    """Warm the browser in the background when BROWSER_WARMUP is enabled."""
+    if os.getenv("BROWSER_WARMUP", "").strip().lower() not in {"1", "true", "yes"}:
+        return
+    # The debug reloader's parent process never serves requests.
+    reloader_parent = (
+        __name__ == "__main__"
+        and os.getenv("FLASK_ENV", "production") == "development"
+        and not os.getenv("WERKZEUG_RUN_MAIN")
+    )
+    if not reloader_parent:
+        threading.Thread(
+            target=_warm_browser, name="browser-warmup", daemon=True
+        ).start()
+
+
+_start_browser_warmup()
 
 
 if __name__ == "__main__":

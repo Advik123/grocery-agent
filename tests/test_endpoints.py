@@ -57,13 +57,19 @@ def test_add_bad_token_401(client):
     ],
 )
 def test_add_good_token_passes(client, headers):
-    async def fake_add(url, items):
-        return ["eggs x2"]
-
-    with patch("app.add_to_list", side_effect=fake_add):
+    with patch("app.add_to_list", return_value=["eggs x2"]):
         resp = client.post("/add", json=ADD_BODY, headers=headers)
     assert resp.status_code == 200
     assert resp.get_json()["added"] == ["eggs x2"]
+
+
+def test_add_browser_failure_returns_500(client):
+    with patch("app.add_to_list", side_effect=RuntimeError("browser died")):
+        resp = client.post(
+            "/add", json=ADD_BODY, headers={"X-Token": "add-secret-value"}
+        )
+    assert resp.status_code == 500
+    assert resp.get_json() == {"error": "playwright failed: browser died"}
 
 
 def test_add_good_token_still_validates(client):
