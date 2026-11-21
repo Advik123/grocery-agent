@@ -5,14 +5,19 @@
 # parallel requests and Siri App Intents will reuse the same endpoint.
 
 import asyncio
+import hashlib
 import hmac
 import os
+import subprocess
+import time
 from contextvars import ContextVar
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
 from conversation_memory import (
+    _SESSIONS,
     get_expired_store,
     get_last_store,
     has_pending_items,
@@ -30,6 +35,21 @@ load_dotenv()
 
 app = Flask(__name__)
 
+_START_TIME = time.monotonic()
+_LAST_ADD_AT: list[str | None] = [None]
+
+# Config vars reported (set / not set only) by GET /status.
+_STATUS_CONFIG_VARS = (
+    "GEMINI_API_KEY",
+    "WA_PHONE_NUMBER_ID",
+    "WA_ACCESS_TOKEN",
+    "WA_VERIFY_TOKEN",
+    "WA_APP_SECRET",
+    "ADD_TOKEN",
+    "STATUS_TOKEN",
+    "SHORTCUT_TOKEN",
+)
+
 WHATSAPP_FORMAT_HINT = (
     "Include a store name (e.g. Aldi) and what to add, or use e.g. "
     '"aldi: eggs 3, milk 2".'
@@ -42,6 +62,56 @@ _AFFIRMATIVES = {"yes", "yeah", "yep", "y", "ok", "okay", "sure", "yup"}
 _REPLY_COLLECTOR: ContextVar[list[str] | None] = ContextVar(
     "reply_collector", default=None
 )
+
+
+def _record_add() -> None:
+    """Remember the UTC time of the last successful list add."""
+    _LAST_ADD_AT[0] = datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _check_token(env_name: str) -> tuple[Response, int] | None:
+    """Return an error response unless the request carries the *env_name* token.
+
+    Accepts the token via ``X-Token`` or ``Authorization: Bearer <token>``.
+    """
+    expected = os.getenv(env_name)
+    if not expected:
+        return jsonify({"error": "endpoint is not configured"}), 503
+
+    token = request.headers.get("X-Token", "")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+    if not hmac.compare_digest(token.encode(), expected.encode()):
+        return jsonify({"error": "unauthorized"}), 401
+    return None
+
+
+def _valid_wa_signature(secret: str, raw_body: bytes) -> bool:
+    """Check Meta's X-Hub-Signature-256 header against *raw_body*."""
+    header = request.headers.get("X-Hub-Signature-256", "")
+    if not header.startswith("sha256="):
+        return False
+    digest = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(header[7:].encode(), digest.encode())
+
+
+def _git_short_sha() -> str | None:
+    """Return the short git commit SHA, or None if unavailable."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = out.stdout.strip()
+    return sha if out.returncode == 0 and sha else None
 
 
 def _reply_or_log(to: str, message: str) -> None:
@@ -69,6 +139,10 @@ def add():
     Expected body:
         {"store": "aldi", "items": {"eggs": 3, "milk": 2}}
     """
+    denied = _check_token("ADD_TOKEN")
+    if denied:
+        return denied
+
     body = request.get_json(silent=True)
     if body is None:
         return jsonify({"error": "request body must be JSON"}), 400
@@ -100,6 +174,7 @@ def add():
     except Exception as exc:
         return jsonify({"error": f"playwright failed: {exc}"}), 500
 
+    _record_add()
     return jsonify({"status": "success", "added": added, "store": store}), 200
 
 
@@ -135,6 +210,7 @@ def _execute_add(phone: str, store: str, raw_items: dict[str, int]) -> None:
 
     try:
         added = asyncio.run(add_to_list(url, items))
+        _record_add()
         remember_store(phone, store)
         _reply_or_log(phone, f"Added: {', '.join(added)} to {store.title()} ✓")
     except RuntimeError as exc:
@@ -246,6 +322,15 @@ def _handle_message(phone: str, text: str) -> None:
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_webhook():
     """Handle inbound WhatsApp messages and add parsed items to a store list."""
+    secret = os.getenv("WA_APP_SECRET")
+    if not secret:
+        print("ERROR: WA_APP_SECRET is not set; rejecting WhatsApp webhook")
+        return jsonify({"error": "webhook is not configured"}), 503
+
+    raw_body = request.get_data()
+    if not _valid_wa_signature(secret, raw_body):
+        return jsonify({"error": "invalid signature"}), 403
+
     body = request.get_json(silent=True)
     if body is None:
         return "", 200
@@ -296,6 +381,26 @@ def shortcut():
         _REPLY_COLLECTOR.reset(reset)
 
     return jsonify({"reply": " ".join(replies)}), 200
+
+
+@app.route("/status", methods=["GET"])
+def status():
+    """Return non-sensitive, read-only process info (no external calls)."""
+    denied = _check_token("STATUS_TOKEN")
+    if denied:
+        return denied
+
+    return jsonify(
+        {
+            "ok": True,
+            "uptime_seconds": int(time.monotonic() - _START_TIME),
+            "commit": _git_short_sha(),
+            "port": int(os.getenv("PORT", "5000")),
+            "config": {name: bool(os.getenv(name)) for name in _STATUS_CONFIG_VARS},
+            "active_sessions": len(_SESSIONS),
+            "last_add_at": _LAST_ADD_AT[0],
+        }
+    ), 200
 
 
 if __name__ == "__main__":

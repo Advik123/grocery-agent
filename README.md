@@ -125,13 +125,14 @@ Open a second terminal and run:
 **Windows (PowerShell) — success:**
 
 ```powershell
-Invoke-RestMethod -Method POST -Uri http://localhost:5000/add -ContentType "application/json" -Body '{"store": "aldi", "items": {"eggs": 3, "milk": 2}}'
+Invoke-RestMethod -Method POST -Uri http://localhost:5000/add -Headers @{"X-Token"=$env:ADD_TOKEN} -ContentType "application/json" -Body '{"store": "aldi", "items": {"eggs": 3, "milk": 2}}'
 ```
 
 **macOS / Linux — success:**
 
 ```bash
 curl -X POST http://localhost:5000/add \
+  -H "X-Token: $ADD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"store": "aldi", "items": {"eggs": 3, "milk": 2}}'
 ```
@@ -147,13 +148,14 @@ curl -X POST http://localhost:5000/add \
 PowerShell:
 
 ```powershell
-Invoke-RestMethod -Method POST -Uri http://localhost:5000/add -ContentType "application/json" -Body '{"store": "nonexistent", "items": {"eggs": 1}}'
+Invoke-RestMethod -Method POST -Uri http://localhost:5000/add -Headers @{"X-Token"=$env:ADD_TOKEN} -ContentType "application/json" -Body '{"store": "nonexistent", "items": {"eggs": 1}}'
 ```
 
 macOS / Linux:
 
 ```bash
 curl -X POST http://localhost:5000/add \
+  -H "X-Token: $ADD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"store": "nonexistent", "items": {"eggs": 1}}'
 ```
@@ -169,13 +171,14 @@ Expected:
 PowerShell:
 
 ```powershell
-Invoke-RestMethod -Method POST -Uri http://localhost:5000/add -ContentType "application/json" -Body '{"store": "aldi", "items": {"eggs": 0}}'
+Invoke-RestMethod -Method POST -Uri http://localhost:5000/add -Headers @{"X-Token"=$env:ADD_TOKEN} -ContentType "application/json" -Body '{"store": "aldi", "items": {"eggs": 0}}'
 ```
 
 macOS / Linux:
 
 ```bash
 curl -X POST http://localhost:5000/add \
+  -H "X-Token: $ADD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"store": "aldi", "items": {"eggs": 0}}'
 ```
@@ -187,6 +190,38 @@ Expected:
 ```
 
 
+
+## Security
+
+The server is exposed publicly (ngrok), so every endpoint is authenticated and
+fails closed when its secret is not configured.
+
+| Env var | Protects | Behavior |
+|---|---|---|
+| `ADD_TOKEN` | `POST /add` | `X-Token` header or `Authorization: Bearer <token>`. 503 if unset, 401 if missing/wrong. |
+| `STATUS_TOKEN` | `GET /status` | Same as above. Returns only non-sensitive info (uptime, commit, port, set/unset flags for config vars, session count, last add time). |
+| `SHORTCUT_TOKEN` | `POST /shortcut` | `X-Token` header. 503 if unset, 401 if bad. |
+| `WA_APP_SECRET` | `POST /whatsapp` | Verifies Meta's `X-Hub-Signature-256` (HMAC-SHA256 of the raw body). 403 if missing/invalid, 503 if unset. |
+| `WA_VERIFY_TOKEN` | `GET /whatsapp` | Meta verification handshake (unchanged). |
+
+Generate a token:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+The WhatsApp App Secret is in the Meta App Dashboard > App settings > Basic >
+App secret. Never commit real values; `.env` is git-ignored.
+
+```bash
+curl -X POST https://your-domain.ngrok.app/add \
+  -H "X-Token: $ADD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"store": "aldi", "items": {"eggs": 3}}'
+
+curl https://your-domain.ngrok.app/status \
+  -H "Authorization: Bearer $STATUS_TOKEN"
+```
 
 ## Siri via Apple Shortcuts
 
