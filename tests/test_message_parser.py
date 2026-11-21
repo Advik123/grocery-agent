@@ -153,6 +153,12 @@ def test_thinking_config_per_model_family():
         ),
         ("eggs\nmilk\nbread", (None, {"eggs": 1, "milk": 1, "bread": 1})),
         ("eggs and 2 milk", (None, {"eggs": 1, "milk": 2})),
+        ("paper towels, milk at aldi", ("aldi", {"paper towels": 1, "milk": 1})),
+        (
+            "2 paper towels, olive oil x3, and almond milks to costco",
+            ("costco", {"paper towels": 2, "olive oil": 3, "almond milk": 1}),
+        ),
+        ("aldi: dish soap, eggs 2", ("aldi", {"dish soap": 1, "eggs": 2})),
     ],
 )
 def test_fast_path_matches(gemini, text, expected):
@@ -178,7 +184,16 @@ def test_fast_path_store_only_raises_value_error(gemini, text):
     "text",
     [
         "mac and cheese at aldi",  # compound product
-        "olive oil at aldi",  # multi-word name
+        "olive oil at aldi",  # multi-word name without commas
+        "test item at aldi",  # multi-word name without commas
+        "paper towels and milk at aldi",  # "and" only, no commas
+        "paper towels, milk",  # multi-word name without a store
+        "milk, eggs bread at aldi",  # staples run together: missing comma
+        "paper towels, mac and cheese at aldi",  # compound product
+        "milk, cream of mushroom at aldi",  # filler word inside a name
+        "milk, big bag chips at aldi",  # unit inside a name
+        "milk, aldi eggs at aldi",  # store name inside a name
+        "milk, very large brown eggs at aldi",  # more than three words
         "eggs milk aldi",  # unseparated words
         "eggs at target",  # unknown store
         "i need eggs",  # sentence

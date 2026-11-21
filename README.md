@@ -162,8 +162,10 @@ time curl -s -X POST https://<ngrok-domain>/shortcut -H "X-Token: $SHORTCUT_TOKE
 ```
 
 Simple lists such as `milk, eggs at aldi`, `2 eggs and milk at aldi` or
-`eggs x3 aldi` skip Gemini entirely; anything else (sentences, multi-word item
-names, unknown stores) is sent to Gemini with thinking disabled.
+`eggs x3 aldi` skip Gemini entirely.  Multi-word names also skip it when the
+list uses commas and names a known store (`paper towels, milk at aldi`).
+Anything else (sentences, `olive oil at aldi` without commas, unknown stores)
+is sent to Gemini with thinking disabled.
 
 ## Testing the endpoint
 

@@ -78,42 +78,71 @@ _MASS_NOUNS = frozenset(
     }
 )  # fmt: skip
 
-# Names are a single word: without punctuation, "eggs milk bread" could be one
-# item or three, so multi-word names are left to Gemini.
+# Items usually bought on their own.  A multi-word name made only of these
+# ("eggs bread") is more likely a missing comma than one product.
+_STAPLES = _MASS_NOUNS | frozenset(
+    {
+        "apple", "apples", "bacon", "bananas", "beef", "carrots", "cereal",
+        "chicken", "egg", "eggs", "garlic", "lettuce", "onions", "pasta",
+        "potatoes", "tomatoes",
+    }
+)  # fmt: skip
+
 _QTY = r"(?P<qty>[1-9]\d?)"
-_NAME = r"(?P<name>(?!x\b)[a-z][a-z'-]*)"
-_ITEM_PATTERNS = (
-    re.compile(rf"{_QTY}(?:\s*x)?\s+{_NAME}"),  # "2 eggs", "2x eggs"
-    re.compile(rf"{_NAME}(?:\s+x\s*|\s+){_QTY}"),  # "eggs 3", "eggs x3"
-    re.compile(_NAME),  # "eggs"
-)
+_WORD = r"(?!x\b)[a-z][a-z'-]*"
+
+
+def _item_patterns(name: str) -> tuple[re.Pattern[str], ...]:
+    """Compile the "2 eggs" / "eggs x3" / "eggs" item shapes for a *name* regex."""
+    name = f"(?P<name>{name})"
+    return (
+        re.compile(rf"{_QTY}(?:\s*x)?\s+{name}"),  # "2 eggs", "2x eggs"
+        re.compile(rf"{name}(?:\s+x\s*|\s+){_QTY}"),  # "eggs 3", "eggs x3"
+        re.compile(name),  # "eggs"
+    )
+
+
+# Without punctuation "eggs milk bread" could be one item or three, so names of
+# up to three words are only accepted in comma-separated lists for a known store.
+_SINGLE_WORD_ITEMS = _item_patterns(_WORD)
+_MULTI_WORD_ITEMS = _item_patterns(rf"{_WORD}(?: {_WORD}){{0,2}}")
 _LEADING_VERB = re.compile(r"(?:please\s+)?(?:add|get|buy)\s+")
 
 
 def _singular(name: str) -> str:
     """Return *name* with a mass-noun plural made singular; otherwise unchanged."""
+    head, _, last = name.rpartition(" ")
     for suffix in ("es", "s"):
-        stem = name.removesuffix(suffix)
-        if stem != name and stem in _MASS_NOUNS:
-            return stem
+        stem = last.removesuffix(suffix)
+        if stem != last and stem in _MASS_NOUNS:
+            return f"{head} {stem}" if head else stem
     return name
 
 
-def _parse_item(chunk: str) -> tuple[str, int] | None:
-    """Parse one list *chunk* like "2 eggs" or "eggs x3", or None if unclear."""
-    for pattern in _ITEM_PATTERNS:
+def _parse_item(chunk: str, multi_word: bool) -> tuple[str, int] | None:
+    """Parse one list *chunk* like "2 eggs" or "eggs x3", or None if unclear.
+
+    Names may have up to three words only when *multi_word* is True.
+    """
+    patterns = _MULTI_WORD_ITEMS if multi_word else _SINGLE_WORD_ITEMS
+    for pattern in patterns:
         match = pattern.fullmatch(chunk)
         if match is None:
             continue
         name = match["name"]
-        if name in _AMBIGUOUS_WORDS or name in STORE_LISTS:
+        words = name.split()
+        if name in STORE_LISTS or any(
+            w in _AMBIGUOUS_WORDS or w in STORE_LISTS for w in words
+        ):
+            return None
+        if len(words) > 1 and all(w in _STAPLES for w in words):
             return None
         qty = int(match["qty"]) if "qty" in pattern.groupindex else 1
         return _singular(name), qty
     return None
 
 
-def _parse_item_list(text: str) -> dict[str, int] | None:
+def _parse_item_list(text: str, multi_word: bool) -> dict[str, int] | None:
     """Parse comma / "and" separated *text* into items, or None if unclear."""
     words = text.replace(",", " ").split()
     for left, mid, right in zip(words, words[1:], words[2:], strict=False):
@@ -124,7 +153,7 @@ def _parse_item_list(text: str) -> dict[str, int] | None:
     for part in text.split(","):
         part = part.strip().removeprefix("and ")
         for chunk in re.split(r"\s+(?:and|&)\s+", part):
-            parsed = _parse_item(chunk.strip())
+            parsed = _parse_item(chunk.strip(), multi_word)
             if parsed is None or parsed[0] in items:
                 return None
             items[parsed[0]] = parsed[1]
@@ -160,7 +189,7 @@ def _fast_parse(text: str) -> tuple[str | None, dict[str, int]] | None:
     if match is not None:
         store, body = match["store"], match["items"]
 
-    items = _parse_item_list(body)
+    items = _parse_item_list(body, multi_word=store is not None and "," in body)
     if not items:
         return None
     return store, items
