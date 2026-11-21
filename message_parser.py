@@ -191,7 +191,11 @@ def _gemini() -> tuple[genai.Client, str, types.GenerateContentConfig]:
         response_mime_type="application/json",
         thinking_config=_thinking_config(model),
     )
-    return genai.Client(api_key=api_key), model, config
+    # google-genai defaults the Developer API to v1, which rejects
+    # system_instruction ("Developer instruction is not enabled").
+    http_options = types.HttpOptions(api_version="v1beta")
+    client = genai.Client(api_key=api_key, http_options=http_options)
+    return client, model, config
 
 
 def _gemini_parse(text: str) -> tuple[str | None, dict[str, int]]:

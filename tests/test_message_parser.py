@@ -109,12 +109,21 @@ def test_client_is_built_once(monkeypatch):
         generate.return_value = _make_response({"store": None, "items": {"x": 1}})
         parse_whatsapp_text("could you add eggs")
         parse_whatsapp_text("could you add milk")
-    client_cls.assert_called_once_with(api_key="test-key")
+    client_cls.assert_called_once()
+    assert client_cls.call_args.kwargs["api_key"] == "test-key"
+    assert client_cls.call_args.kwargs["http_options"].api_version == "v1beta"
     config = generate.call_args.kwargs["config"]
     assert generate.call_args.kwargs["model"] == "gemini-2.5-flash"
     assert config.response_mime_type == "application/json"
     assert config.thinking_config.thinking_budget == 0
     assert config.system_instruction == message_parser._SYSTEM_PROMPT
+
+
+def test_real_client_uses_v1beta(monkeypatch):
+    """The SDK's own default is v1, which rejects system_instruction."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    client, _, _ = message_parser._gemini()  # no request is sent
+    assert client._api_client._http_options.api_version == "v1beta"
 
 
 def test_thinking_config_per_model_family():
