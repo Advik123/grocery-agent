@@ -104,6 +104,17 @@ email and password.  Once you see your list overview, press **Enter** in the
 terminal.  Your session is saved in `.browser-profile/` and reused by the
 server on future runs.  If your session expires later, just re-run `python login.py`.
 
+The server keeps one Chromium open on `.browser-profile/` while it runs, so
+stop it first and start it again afterwards (Chromium refuses to open a
+profile that is already in use, and the running browser would keep the old
+session):
+
+```bash
+sudo systemctl stop groceries
+python login.py
+sudo systemctl start groceries
+```
+
 ## Running the server
 
 ```bash
@@ -117,6 +128,42 @@ You should see:
 ```
 
 
+
+## Running in production (Raspberry Pi / gunicorn)
+
+The server keeps **one headless Chromium per process** alive between requests
+(about 300-400 MB RAM including Playwright's Node driver), and session memory
+(`conversation_memory.py`) is also per process.  Run a single gunicorn worker
+and use threads for concurrency; adds are serialized on the one browser anyway:
+
+```bash
+gunicorn --workers 1 --threads 4 --timeout 120 --bind 127.0.0.1:5000 app:app
+```
+
+Do not use `--preload` (the browser thread must start inside the worker).
+Set `BROWSER_WARMUP=1` in `.env` so Chromium starts and opens your first list
+when the worker boots, instead of on the first request.
+
+### Measuring latency
+
+Each request prints timing lines to stdout (the systemd journal):
+
+```
+[timing] fast_path_parse 0.1 ms
+[timing] gemini_parse 850 ms (gemini-2.5-flash)
+[timing] playwright_add 420 ms (2 items)
+[timing] browser_warm_up 9000 ms
+```
+
+```bash
+journalctl -u groceries -f | grep timing
+time curl -s -X POST https://<ngrok-domain>/shortcut -H "X-Token: $SHORTCUT_TOKEN" \
+  -H "Content-Type: application/json" -d '{"text": "milk, eggs at aldi"}'
+```
+
+Simple lists such as `milk, eggs at aldi`, `2 eggs and milk at aldi` or
+`eggs x3 aldi` skip Gemini entirely; anything else (sentences, multi-word item
+names, unknown stores) is sent to Gemini with thinking disabled.
 
 ## Testing the endpoint
 
@@ -354,6 +401,7 @@ Valid store names match the keys in `store_config.py`.
 | `Login session expired`                                       | Re-run `python login.py` to log in again                                                                        |
 | `playwright failed: Locator.fill: Timeout`                    | Login session is missing or expired — run `python login.py`                                                     |
 | Server starts but items don't appear on OurGroceries          | Make sure `store_config.py` has your real list URL, not the placeholder                                         |
+| `login.py` fails with a profile / `ProcessSingleton` error     | The server's Chromium is using `.browser-profile/`. Stop the server, run `login.py`, start it again             |
 | `Address already in use`                                      | Another process is on port 5000. Change `PORT` in `.env` or kill the other process                              |
 | `curl -X` fails with "parameter cannot be found"              | PowerShell aliases `curl` to `Invoke-WebRequest`. Use `Invoke-RestMethod` (shown above) or `curl.exe` instead   |
 
